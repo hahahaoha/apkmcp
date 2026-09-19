@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -381,7 +380,7 @@ private fun ActionCard(
             )
             FilledTonalButton(onClick = onClick) {
                 Icon(
-                    if (done) Icons.Default.Stop else Icons.Default.PlayArrow,
+                    if (done) Icons.Default.Close else Icons.Default.PlayArrow,
                     contentDescription = null,
                     modifier = Modifier.size(18.dp)
                 )
