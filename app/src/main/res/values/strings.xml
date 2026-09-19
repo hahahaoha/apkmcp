@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">APK MCP</string>
+    <string name="accessibility_label">APK MCP 手机操作</string>
+    <string name="accessibility_description">允许 AI 通过 MCP 读取屏幕内容、点击、滑动和输入文字。</string>
+    <string name="channel_server">MCP 服务</string>
+    <string name="channel_server_desc">保持 HTTP/MCP 接口常驻，供 AI 调用</string>
+    <string name="channel_capture">屏幕捕获</string>
+    <string name="channel_capture_desc">保持屏幕截图能力运行</string>
+</resources>

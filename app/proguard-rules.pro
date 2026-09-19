@@ -1,0 +1,3 @@
+-keep class com.apkmcp.app.** { *; }
+-keep class fi.iki.elonen.** { *; }
+-dontwarn fi.iki.elonen.**
