@@ -379,7 +379,7 @@ object ToolRegistry {
 
         val switched = awaitForeground(pkg, 2500L)
         val now = svc?.currentPackage()
-        if (switched) {
+        return if (switched) {
             ToolResult.text("已启动 $pkg（当前前台: $now）")
         } else {
             ToolResult.error(
