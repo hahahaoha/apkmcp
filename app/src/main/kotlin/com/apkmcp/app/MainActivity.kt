@@ -238,7 +238,19 @@ private fun HomeTab(
         }
 
         item {
-            SectionTitle("第 2 步 · 开启屏幕捕获")
+            SectionTitle("第 2 步 · 允许后台启动应用")
+            ActionCard(
+                title = "悬浮窗权限",
+                desc = if (status.overlay) "已开启。AI 可以自由跳转到别的 App"
+                else "未开启。Android 10+ 会拦截后台启动 Activity，launch_app 会跳不过去",
+                done = status.overlay,
+                buttonText = if (status.overlay) "去管理" else "去开启",
+                onClick = { vm.openOverlaySettings() }
+            )
+        }
+
+        item {
+            SectionTitle("第 3 步 · 开启屏幕捕获")
             ActionCard(
                 title = "屏幕截图",
                 desc = if (status.capture) "捕获中，AI 可以看到屏幕了"
@@ -250,7 +262,7 @@ private fun HomeTab(
         }
 
         item {
-            SectionTitle("第 3 步 · 启动 MCP 服务")
+            SectionTitle("第 4 步 · 启动 MCP 服务")
             ActionCard(
                 title = "HTTP / MCP 接口",
                 desc = if (status.server)
@@ -298,6 +310,7 @@ private fun StatusCard(s: UiStatus) {
                 Chip("无障碍", s.accessibility)
                 Chip("截图", s.capture)
                 Chip("服务", s.server)
+                Chip("悬浮窗", s.overlay)
             }
             s.lastError?.let {
                 Text(

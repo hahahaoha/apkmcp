@@ -298,7 +298,8 @@ class McpHttpServer(
         Logs.add("MCP 调用 $name")
         val t0 = System.currentTimeMillis()
         val result = ToolRegistry.call(name, args)
-        Logs.add("  └ ${if (result.isError) "失败" else "完成"} ${System.currentTimeMillis() - t0}ms")
+        val brief = result.text.lineSequence().firstOrNull()?.take(90).orEmpty()
+        Logs.add("  └ ${if (result.isError) "失败" else "完成"} ${System.currentTimeMillis() - t0}ms  $brief")
         return result.toJson()
     }
 

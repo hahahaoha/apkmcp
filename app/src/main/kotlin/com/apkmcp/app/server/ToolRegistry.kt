@@ -3,6 +3,7 @@ package com.apkmcp.app.server
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import android.util.Base64
 import com.apkmcp.app.ApkMcpApp
 import com.apkmcp.app.capture.ScreenCaptureService
@@ -366,12 +367,45 @@ object ToolRegistry {
         val li = pm.getLaunchIntentForPackage(pkg)
             ?: return ToolResult.error("$pkg 没有可启动的入口。")
         li.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return try {
+        li.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+
+        val svc = AgentAccessibilityService.instance
+        val before = svc?.currentPackage()
+        try {
             ctx.startActivity(li)
-            ToolResult.text("已启动 $pkg")
         } catch (t: Throwable) {
-            ToolResult.error("启动失败: ${t.message}")
+            return ToolResult.error("启动 $pkg 失败: ${t.message}")
         }
+
+        val switched = awaitForeground(pkg, 2500L)
+        val now = svc?.currentPackage()
+        if (switched) {
+            ToolResult.text("已启动 $pkg（当前前台: $now）")
+        } else {
+            ToolResult.error(
+                "调用了 $pkg 的启动 Intent，但 2.5 秒后前台仍是 " + (now ?: "未知") +
+                    "（启动前是 " + (before ?: "未知") + "）。\n" +
+                    "原因: Android 10+ 默认禁止后台应用启动 Activity。\n" +
+                    "解决: 到 APK MCP 控制台开启「悬浮窗 / 显示在其他应用上层」权限（有该权限的 App 会被豁免），然后重试；\n" +
+                    "也可以先 press_key home 回到桌面，再调 launch_app。"
+            )
+        }
+    }
+
+    /** 轮询，等前台真的切到 pkg */
+    private fun awaitForeground(pkg: String, timeoutMs: Long): Boolean {
+        val svc = AgentAccessibilityService.instance ?: return false
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val cur = svc.currentPackage()
+            if (cur != null && cur == pkg) return true
+            try {
+                Thread.sleep(120)
+            } catch (_: InterruptedException) {
+                return svc.currentPackage() == pkg
+            }
+        }
+        return svc.currentPackage() == pkg
     }
 
     private fun listApps(): ToolResult {
@@ -398,14 +432,41 @@ object ToolRegistry {
         val url = a["url"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult.error("需要 url")
         val ctx = ApkMcpApp.appContext
-        return try {
-            val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val svc = AgentAccessibilityService.instance
+        val before = svc?.currentPackage()
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
             ctx.startActivity(i)
-            ToolResult.text("已打开 $url")
         } catch (t: Throwable) {
-            ToolResult.error("打开失败: ${t.message}")
+            return ToolResult.error("打开 $url 失败: ${t.message}")
         }
+        val changed = awaitForegroundChanged(before, 2500L)
+        val now = svc?.currentPackage()
+        return if (changed) {
+            ToolResult.text("已打开 $url（当前前台: $now）")
+        } else {
+            ToolResult.error(
+                "调用了打开 $url 的 Intent，但 2.5 秒后前台仍是 " + (now ?: "未知") +
+                    "。多半也是后台启动 Activity 被系统拦截，去开启「悬浮窗」权限后重试。"
+            )
+        }
+    }
+
+    /** 轮询，等前台从 before 变成别的 App */
+    private fun awaitForegroundChanged(before: String?, timeoutMs: Long): Boolean {
+        val svc = AgentAccessibilityService.instance ?: return false
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val cur = svc.currentPackage()
+            if (cur != null && cur != before) return true
+            try {
+                Thread.sleep(120)
+            } catch (_: InterruptedException) {
+                return svc.currentPackage() != before
+            }
+        }
+        return svc.currentPackage() != before
     }
 
     private fun waitTool(a: JsonObject): ToolResult {
@@ -436,6 +497,15 @@ object ToolRegistry {
         val capture = ScreenCaptureService.instance
         val sb = StringBuilder()
         sb.append("无障碍服务: ").append(if (svc != null) "已开启" else "未开启").append('\n')
+        val canOverlay = try {
+            Settings.canDrawOverlays(ApkMcpApp.appContext)
+        } catch (t: Throwable) {
+            false
+        }
+        sb.append("悬浮窗权限: ").append(
+            if (canOverlay) "已开启（launch_app 不会被后台启动限制拦截）"
+            else "未开启（launch_app / open_url 可能被系统拦截）"
+        ).append('\n')
         sb.append("屏幕捕获: ")
             .append(if (capture?.running == true) "运行中 ${capture.imageWidth}x${capture.imageHeight}" else "未开启")
             .append('\n')

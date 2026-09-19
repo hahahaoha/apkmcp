@@ -3,7 +3,7 @@ package com.apkmcp.app.ui
 import android.app.Application
 import android.content.Context
 import android.content.Intent
-import android.os.Build
+import android.net.Uri
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -22,6 +22,7 @@ import kotlin.random.Random
 /** 控制台的状态快照 */
 data class UiStatus(
     val accessibility: Boolean = false,
+    val overlay: Boolean = false,
     val capture: Boolean = false,
     val server: Boolean = false,
     val port: Int = 0,
@@ -41,11 +42,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh() {
         _status.value = UiStatus(
             accessibility = AgentAccessibilityService.ready(),
+            overlay = canDrawOverlays(),
             capture = ScreenCaptureService.ready(),
             server = McpServerService.running(),
             port = if (McpServerService.running()) McpServerService.boundPort else 0,
             lastError = McpServerService.lastError
         )
+    }
+
+    private fun canDrawOverlays(): Boolean = try {
+        Settings.canDrawOverlays(ctx)
+    } catch (t: Throwable) {
+        false
     }
 
     fun openAccessibilitySettings() {
@@ -56,6 +64,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         } catch (t: Throwable) {
             Logs.add("打不开无障碍设置: ${t.message}")
+        }
+    }
+
+    /**
+     * 悬浮窗权限（SYSTEM_ALERT_WINDOW）。
+     * 除了能画悬浮窗，它同时是 Android 10+「后台启动 Activity」限制的官方豁免条件 ——
+     * launch_app / open_url 跳不过去，基本就是缺它。
+     */
+    fun openOverlaySettings() {
+        try {
+            val i = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${ctx.packageName}")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(i)
+            return
+        } catch (t: Throwable) {
+            Logs.add("带包名的悬浮窗设置页打不开: ${t.message}")
+        }
+        try {
+            ctx.startActivity(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (t: Throwable) {
+            Logs.add("打不开悬浮窗设置: ${t.message}")
         }
     }
 
