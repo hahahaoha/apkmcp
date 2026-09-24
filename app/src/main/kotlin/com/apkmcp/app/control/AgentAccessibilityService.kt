@@ -105,7 +105,7 @@ class AgentAccessibilityService : AccessibilityService() {
 
             val accepted = dispatchGesture(
                 gesture,
-                object : GestureDescription.GestureResultCallback() {
+                object : AccessibilityService.GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
                         completed = true
                         done.countDown()
