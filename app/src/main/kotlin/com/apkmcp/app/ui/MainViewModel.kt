@@ -12,6 +12,7 @@ import com.apkmcp.app.control.AgentAccessibilityService
 import com.apkmcp.app.core.Logs
 import com.apkmcp.app.core.McpConfig
 import com.apkmcp.app.core.Prefs
+import com.apkmcp.app.enhance.ShizukuEnhance
 import com.apkmcp.app.server.McpServerService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +26,7 @@ data class UiStatus(
     val overlay: Boolean = false,
     val capture: Boolean = false,
     val server: Boolean = false,
+    val shizuku: ShizukuEnhance.State = ShizukuEnhance.State.NOT_INSTALLED,
     val port: Int = 0,
     val lastError: String? = null
 )
@@ -45,6 +47,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             overlay = canDrawOverlays(),
             capture = ScreenCaptureService.ready(),
             server = McpServerService.running(),
+            shizuku = ShizukuEnhance.state(),
             port = if (McpServerService.running()) McpServerService.boundPort else 0,
             lastError = McpServerService.lastError
         )
@@ -71,6 +74,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * 悬浮窗权限（SYSTEM_ALERT_WINDOW）。
      * 除了能画悬浮窗，它同时是 Android 10+「后台启动 Activity」限制的官方豁免条件 ——
      * launch_app / open_url 跳不过去，基本就是缺它。
+     * 注意：MIUI / HyperOS / EMUI 等 ROM 有更严的私有限制，悬浮窗豁免也可能无效，根治用 Shizuku。
      */
     fun openOverlaySettings() {
         try {
@@ -90,6 +94,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         } catch (t: Throwable) {
             Logs.add("打不开悬浮窗设置: ${t.message}")
+        }
+    }
+
+    /**
+     * Shizuku 增强引导：
+     * 服务在跑且未授权 → 弹授权框；已安装 → 打开 Shizuku App；未安装 → 打开官网。
+     */
+    fun openShizuku() {
+        if (ShizukuEnhance.alive() && !ShizukuEnhance.granted()) {
+            ShizukuEnhance.requestPermission()
+            return
+        }
+        try {
+            val li = ctx.packageManager.getLaunchIntentForPackage(ShizukuEnhance.SHIZUKU_PACKAGE)
+            if (li != null) {
+                li.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(li)
+                return
+            }
+        } catch (t: Throwable) {
+            Logs.add("打不开 Shizuku: ${t.message}")
+        }
+        try {
+            ctx.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (t: Throwable) {
+            Logs.add("打不开 Shizuku 官网: ${t.message}")
         }
     }
 

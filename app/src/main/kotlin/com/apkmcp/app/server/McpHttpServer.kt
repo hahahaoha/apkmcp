@@ -159,16 +159,16 @@ class McpHttpServer(
         val mgr = com.apkmcp.app.capture.ScreenCaptureService.instance
             ?: return json("{\"ok\":false,\"error\":\"capture not started\"}")
         val cfg = com.apkmcp.app.core.Prefs.config.value
-        val bytes = mgr.captureJpeg(cfg.maxWidth, cfg.jpegQuality)
+        val cap = mgr.captureJpeg(cfg.maxWidth, cfg.jpegQuality)
             ?: return json("{\"ok\":false,\"error\":\"no frame yet\"}")
         val r = newFixedLengthResponse(
             Response.Status.OK,
             "image/jpeg",
-            ByteArrayInputStream(bytes),
-            bytes.size.toLong()
+            ByteArrayInputStream(cap.bytes),
+            cap.bytes.size.toLong()
         )
-        r.addHeader("X-Image-Width", mgr.imageWidth.toString())
-        r.addHeader("X-Image-Height", mgr.imageHeight.toString())
+        r.addHeader("X-Image-Width", cap.width.toString())
+        r.addHeader("X-Image-Height", cap.height.toString())
         r.addHeader("X-Real-Width", mgr.realWidth.toString())
         r.addHeader("X-Real-Height", mgr.realHeight.toString())
         return withCors(r)

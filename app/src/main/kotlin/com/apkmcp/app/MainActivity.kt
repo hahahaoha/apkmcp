@@ -79,6 +79,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.apkmcp.app.capture.ScreenCaptureService
 import com.apkmcp.app.core.Logs
 import com.apkmcp.app.core.McpConfig
+import com.apkmcp.app.enhance.ShizukuEnhance
 import com.apkmcp.app.ui.MainViewModel
 import com.apkmcp.app.ui.UiStatus
 import com.apkmcp.app.ui.theme.ApkMcpTheme
@@ -276,6 +277,31 @@ private fun HomeTab(
         }
 
         item {
+            SectionTitle("增强（可选）· Shizuku")
+            ActionCard(
+                title = "Shizuku 特权通道",
+                desc = when (status.shizuku) {
+                    ShizukuEnhance.State.READY ->
+                        "已就绪。launch_app / open_url 走特权通道，不受「后台启动」限制"
+                    ShizukuEnhance.State.NEED_PERMISSION ->
+                        "已连接但未授权本应用，点「去授权」后在弹窗里允许"
+                    ShizukuEnhance.State.NOT_RUNNING ->
+                        "已安装但服务未运行。打开 Shizuku App 按指引启动服务（重启手机后需重新启动）"
+                    else ->
+                        "未安装。装好并授权后，AI 跳转 App 不再被系统拦截（MIUI/EMUI 用户强烈推荐）"
+                },
+                done = status.shizuku == ShizukuEnhance.State.READY,
+                buttonText = when (status.shizuku) {
+                    ShizukuEnhance.State.READY -> "管理授权"
+                    ShizukuEnhance.State.NEED_PERMISSION -> "去授权"
+                    ShizukuEnhance.State.NOT_RUNNING -> "打开 Shizuku"
+                    else -> "去安装"
+                },
+                onClick = { vm.openShizuku() }
+            )
+        }
+
+        item {
             SectionTitle("AI 客户端怎么连")
             ConnectCard(vm, status, onToast)
         }
@@ -311,6 +337,7 @@ private fun StatusCard(s: UiStatus) {
                 Chip("截图", s.capture)
                 Chip("服务", s.server)
                 Chip("悬浮窗", s.overlay)
+                Chip("Shizuku", s.shizuku == ShizukuEnhance.State.READY)
             }
             s.lastError?.let {
                 Text(
@@ -505,6 +532,7 @@ private fun SettingsTab(vm: MainViewModel, cfg: McpConfig) {
     var quality by remember(cfg) { mutableStateOf(cfg.jpegQuality.toFloat()) }
     var dynamic by remember(cfg) { mutableStateOf(cfg.dynamicColor) }
     var sticky by remember(cfg) { mutableStateOf(cfg.sticky) }
+    var preferShizuku by remember(cfg) { mutableStateOf(cfg.preferShizuku) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -543,6 +571,12 @@ private fun SettingsTab(vm: MainViewModel, cfg: McpConfig) {
                     desc = "保持接口常驻",
                     checked = sticky,
                     onChange = { sticky = it }
+                )
+                SwitchRow(
+                    title = "优先使用 Shizuku 启动应用",
+                    desc = "检测到已授权的 Shizuku 时，launch_app / open_url 走特权通道，绕过后台启动限制",
+                    checked = preferShizuku,
+                    onChange = { preferShizuku = it }
                 )
             }
         }
@@ -585,7 +619,8 @@ private fun SettingsTab(vm: MainViewModel, cfg: McpConfig) {
                         maxWidth = maxWidth.toInt(),
                         jpegQuality = quality.toInt(),
                         dynamicColor = dynamic,
-                        sticky = sticky
+                        sticky = sticky,
+                        preferShizuku = preferShizuku
                     )
                 )
             },

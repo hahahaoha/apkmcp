@@ -68,5 +68,9 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.nanohttpd)
 
+    // Shizuku 增强模式（可选特权通道）
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
+
     debugImplementation(libs.androidx.ui.tooling)
 }

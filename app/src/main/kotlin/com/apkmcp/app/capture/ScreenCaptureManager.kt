@@ -14,6 +14,9 @@ import android.util.Base64
 import com.apkmcp.app.core.Logs
 import java.io.ByteArrayOutputStream
 
+/** 一次截图结果：JPEG 字节 + 实际像素尺寸（AI 看到、并参与坐标换算的坐标系） */
+data class Jpeg(val bytes: ByteArray, val width: Int, val height: Int)
+
 /**
  * MediaProjection → VirtualDisplay → ImageReader → Bitmap。
  * 持续保留「最近一帧」，captureJpeg() 随时能取。
@@ -27,6 +30,15 @@ class ScreenCaptureManager(private val ctx: Context) {
     private var handler: Handler? = null
 
     @Volatile private var latest: Bitmap? = null
+
+    /** 帧交换锁：捕获线程换帧 与 截图线程读帧 互斥，防止 Bitmap recycle 竞态 */
+    private val frameLock = Any()
+
+    /** 最近一次返回的截图 JPEG 的实际像素尺寸 —— tap/swipe 的「截图坐标」以它为基准换算（见 ToolRegistry.scaleFactor） */
+    @Volatile var lastJpegWidth = 0
+        private set
+    @Volatile var lastJpegHeight = 0
+        private set
 
     /** 截图（缩放后）的像素尺寸 —— AI 看到的坐标系 */
     @Volatile var imageWidth = 0
@@ -75,9 +87,11 @@ class ScreenCaptureManager(private val ctx: Context) {
             if (img != null) {
                 try {
                     val bmp = toBitmap(img)
-                    val old = latest
-                    latest = bmp
-                    if (old != null && !old.isRecycled) old.recycle()
+                    synchronized(frameLock) {
+                        val old = latest
+                        latest = bmp
+                        if (old != null && !old.isRecycled) old.recycle()
+                    }
                 } catch (t: Throwable) {
                     Logs.add("解码帧失败: ${t.message}")
                 } finally {
@@ -151,39 +165,50 @@ class ScreenCaptureManager(private val ctx: Context) {
         return latest != null
     }
 
-    fun captureJpeg(maxWidth: Int, quality: Int): ByteArray? {
-        val src = latest ?: return null
-        if (src.isRecycled) return null
-
-        var bmp: Bitmap = src
-        var scaled: Bitmap? = null
+    fun captureJpeg(maxWidth: Int, quality: Int): Jpeg? {
         val target = maxWidth.coerceIn(240, 4096)
-        if (src.width > target) {
-            val h = (src.height.toFloat() * target / src.width).toInt().coerceAtLeast(2)
-            scaled = Bitmap.createScaledBitmap(src, target, h, true)
-            bmp = scaled
-        }
-        return try {
-            val bos = ByteArrayOutputStream(256 * 1024)
-            bmp.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(10, 100), bos)
-            bos.toByteArray()
-        } catch (t: Throwable) {
-            Logs.add("压缩截图失败: ${t.message}")
-            null
-        } finally {
-            scaled?.recycle()
+        synchronized(frameLock) {
+            val src = latest ?: return null
+            if (src.isRecycled) return null
+
+            var bmp: Bitmap = src
+            var scaled: Bitmap? = null
+            var w = src.width
+            var h = src.height
+            if (src.width > target) {
+                h = (src.height.toFloat() * target / src.width).toInt().coerceAtLeast(2)
+                scaled = Bitmap.createScaledBitmap(src, target, h, true)
+                bmp = scaled
+                w = target
+            }
+            return try {
+                val bos = ByteArrayOutputStream(256 * 1024)
+                bmp.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(10, 100), bos)
+                lastJpegWidth = w
+                lastJpegHeight = h
+                Jpeg(bos.toByteArray(), w, h)
+            } catch (t: Throwable) {
+                Logs.add("压缩截图失败: ${t.message}")
+                null
+            } finally {
+                scaled?.recycle()
+            }
         }
     }
 
     fun captureBase64(maxWidth: Int, quality: Int): String? {
-        val bytes = captureJpeg(maxWidth, quality) ?: return null
-        return Base64.encodeToString(bytes, Base64.NO_WRAP)
+        val cap = captureJpeg(maxWidth, quality) ?: return null
+        return Base64.encodeToString(cap.bytes, Base64.NO_WRAP)
     }
 
     fun release() {
-        val bmp = latest
-        latest = null
-        if (bmp != null && !bmp.isRecycled) bmp.recycle()
+        synchronized(frameLock) {
+            val bmp = latest
+            latest = null
+            if (bmp != null && !bmp.isRecycled) bmp.recycle()
+        }
+        lastJpegWidth = 0
+        lastJpegHeight = 0
     }
 
     fun stop() {

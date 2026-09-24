@@ -22,7 +22,9 @@ data class McpConfig(
     /** Material You 动态取色 */
     val dynamicColor: Boolean = true,
     /** 服务停止后是否自动重启 */
-    val sticky: Boolean = true
+    val sticky: Boolean = true,
+    /** Shizuku 已授权时，launch_app / open_url 优先走特权通道（不受后台启动限制） */
+    val preferShizuku: Boolean = true
 )
 
 object Prefs {
@@ -49,7 +51,8 @@ object Prefs {
             jpegQuality = sp.getInt("jpegQuality", d.jpegQuality),
             themeMode = sp.getInt("themeMode", d.themeMode),
             dynamicColor = sp.getBoolean("dynamicColor", d.dynamicColor),
-            sticky = sp.getBoolean("sticky", d.sticky)
+            sticky = sp.getBoolean("sticky", d.sticky),
+            preferShizuku = sp.getBoolean("preferShizuku", d.preferShizuku)
         )
     }
 
@@ -67,6 +70,7 @@ object Prefs {
             .putInt("themeMode", c.themeMode)
             .putBoolean("dynamicColor", c.dynamicColor)
             .putBoolean("sticky", c.sticky)
+            .putBoolean("preferShizuku", c.preferShizuku)
             .apply()
         _config.value = c
     }

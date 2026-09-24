@@ -37,6 +37,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Shizuku：特权通道（可选增强；装了 Shizuku 并授权后才生效） -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
         <!-- 无障碍服务：读取界面 + 模拟点击/滑动/输入 -->
         <service
             android:name=".control.AgentAccessibilityService"

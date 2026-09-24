@@ -167,6 +167,25 @@ gh run download
 
 ---
 
-## 八、License
+## 八、Shizuku 增强模式（推荐）
+
+`launch_app` / `open_url` 最容易翻车的点是 Android 10+ 的「后台启动 Activity」限制：
+悬浮窗权限只在原生 / 类原生 ROM 上可靠豁免，**MIUI / HyperOS / EMUI 等 ROM 有自己的私有限制**，
+开了悬浮窗也可能跳不过去。
+
+装了 [Shizuku](https://shizuku.rikka.app/) 就没有这个问题：它以 shell（adb）或 root 权限运行服务，
+本 App 经授权后用 `am start` 启动 Activity，不受上述任何限制。
+
+1. 安装并启动 [Shizuku](https://shizuku.rikka.app/)（Android 11+ 手机上无线配对即可自启，无需电脑）
+2. APK MCP 控制台 →「增强（可选）· Shizuku」卡片 → 点「去授权」，允许本应用
+3. 完成。之后 `launch_app` / `open_url` 自动走特权通道；Shizuku 不可用时自动回退常规方式
+
+说明：
+
+- 设置页可关闭「优先使用 Shizuku 启动应用」
+- `get_status` 会显示 Shizuku 状态
+- 特权面刻意收敛：只用来启动 Activity，不开放通用 shell，AI 无法借它执行任意命令
+
+## 九、License
 
 MIT

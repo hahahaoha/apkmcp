@@ -10,6 +10,7 @@ import com.apkmcp.app.capture.ScreenCaptureService
 import com.apkmcp.app.control.AgentAccessibilityService
 import com.apkmcp.app.core.Logs
 import com.apkmcp.app.core.Prefs
+import com.apkmcp.app.enhance.ShizukuEnhance
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -68,7 +69,7 @@ data class ToolDef(val name: String, val description: String, val schema: JsonOb
  * AI 能调用的全部能力。
  *
  * 坐标约定：除非显式传 space=real，所有 x/y 都按「截图坐标系」解释
- * （即 screenshot 返回的图片像素），内部会换算回真实屏幕像素。
+ * （即 AI 最近一次拿到的截图 JPEG 的像素），内部会换算回真实屏幕像素。
  */
 object ToolRegistry {
 
@@ -81,7 +82,8 @@ object ToolRegistry {
         ToolDef(
             "screenshot",
             "截取当前屏幕。返回一张 JPEG 图片（坐标系就是图片像素），以及屏幕真实尺寸。" +
-                "先用它看看现在屏幕上有什么，再决定点什么。",
+                "先用它看看现在屏幕上有什么，再决定点什么。" +
+                "注意：如果 max_width 把图缩小了，后续 tap/swipe 的坐标也按这张图的像素解释。",
             obj(
                 """{"type":"object","properties":{"max_width":{"type":"integer","description":"图片最长边，默认取 App 设置"},"quality":{"type":"integer","description":"JPEG 质量 10-100"}}}"""
             )
@@ -141,7 +143,7 @@ object ToolRegistry {
         ),
         ToolDef(
             "launch_app",
-            "按包名或应用名打开一个 App。",
+            "按包名或应用名打开一个 App。若设备已安装并授权 Shizuku，自动走特权通道，不受后台启动限制。",
             obj("""{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}""")
         ),
         ToolDef(
@@ -178,32 +180,42 @@ object ToolRegistry {
 
     // ── 调用入口 ────────────────────────────────────────────
 
+    /**
+     * 一台手机只有一双手：所有工具调用经 lock 全局串行执行，防止并发手势 / 并发读帧互相踩。
+     * wait / launch_app 等在锁内阻塞是有意为之 —— 它们本来就该让「下一步」等结果。
+     */
+    private val lock = Any()
+
     fun call(name: String, args: JsonObject?): ToolResult {
         val a = args ?: JsonObject(emptyMap())
         return try {
-            when (name) {
-                "screenshot" -> screenshot(a)
-                "get_ui_tree" -> uiTree(a)
-                "tap" -> tap(a)
-                "long_press" -> longPress(a)
-                "swipe" -> swipe(a)
-                "type_text" -> typeText(a)
-                "press_key" -> pressKey(a)
-                "find_and_tap" -> findAndTap(a)
-                "scroll" -> scroll(a)
-                "launch_app" -> launchApp(a)
-                "list_apps" -> listApps()
-                "current_app" -> currentApp()
-                "open_url" -> openUrl(a)
-                "wait" -> waitTool(a)
-                "screen_size" -> screenSize()
-                "get_status" -> status()
-                else -> ToolResult.error("未知工具: $name")
+            synchronized(lock) {
+                dispatch(name, a)
             }
         } catch (t: Throwable) {
             Logs.add("工具 $name 异常: ${t.message}")
             ToolResult.error("$name 执行失败: ${t.message}")
         }
+    }
+
+    private fun dispatch(name: String, a: JsonObject): ToolResult = when (name) {
+        "screenshot" -> screenshot(a)
+        "get_ui_tree" -> uiTree(a)
+        "tap" -> tap(a)
+        "long_press" -> longPress(a)
+        "swipe" -> swipe(a)
+        "type_text" -> typeText(a)
+        "press_key" -> pressKey(a)
+        "find_and_tap" -> findAndTap(a)
+        "scroll" -> scroll(a)
+        "launch_app" -> launchApp(a)
+        "list_apps" -> listApps()
+        "current_app" -> currentApp()
+        "open_url" -> openUrl(a)
+        "wait" -> waitTool(a)
+        "screen_size" -> screenSize()
+        "get_status" -> status()
+        else -> ToolResult.error("未知工具: $name")
     }
 
     // ── 各工具实现 ──────────────────────────────────────────
@@ -217,10 +229,10 @@ object ToolRegistry {
         val cfg = Prefs.config.value
         val mw = a["max_width"]?.jsonPrimitive?.intOrNull ?: cfg.maxWidth
         val q = a["quality"]?.jsonPrimitive?.intOrNull ?: cfg.jpegQuality
-        val jpeg = mgr.captureJpeg(mw, q) ?: return ToolResult.error("截图失败。")
-        val b64 = Base64.encodeToString(jpeg, Base64.NO_WRAP)
+        val cap = mgr.captureJpeg(mw, q) ?: return ToolResult.error("截图失败。")
+        val b64 = Base64.encodeToString(cap.bytes, Base64.NO_WRAP)
         val text = buildString {
-            append("截图尺寸 ").append(mgr.imageWidth).append('x').append(mgr.imageHeight)
+            append("截图尺寸 ").append(cap.width).append('x').append(cap.height)
             append("，屏幕真实尺寸 ").append(mgr.realWidth).append('x').append(mgr.realHeight)
             append("。接下来 tap/swipe 的坐标请按「截图尺寸」给。")
         }
@@ -243,7 +255,7 @@ object ToolRegistry {
         val p = resolveXY(a, "x", "y") ?: return ToolResult.error("需要 x 和 y。")
         val ok = svc.tap(p.first, p.second)
         return if (ok) ToolResult.text("已点击 (${p.first.toInt()}, ${p.second.toInt()})")
-        else ToolResult.error("点击失败。")
+        else ToolResult.error("点击失败：手势被系统取消或超时未确认（可能被用户触摸打断），可稍后重试。")
     }
 
     private fun longPress(a: JsonObject): ToolResult {
@@ -252,7 +264,7 @@ object ToolRegistry {
         val p = resolveXY(a, "x", "y") ?: return ToolResult.error("需要 x 和 y。")
         val ok = svc.longPress(p.first, p.second)
         return if (ok) ToolResult.text("已长按 (${p.first.toInt()}, ${p.second.toInt()})")
-        else ToolResult.error("长按失败。")
+        else ToolResult.error("长按失败：手势被系统取消或超时未确认。")
     }
 
     private fun swipe(a: JsonObject): ToolResult {
@@ -266,7 +278,7 @@ object ToolRegistry {
         val s = scaleFactor(a)
         val ok = svc.swipe(x1 * s, y1 * s, x2 * s, y2 * s, dur)
         return if (ok) ToolResult.text("已滑动 (${x1.toInt()},${y1.toInt()}) → (${x2.toInt()},${y2.toInt()})")
-        else ToolResult.error("滑动失败。")
+        else ToolResult.error("滑动失败：手势被系统取消或超时未确认。")
     }
 
     private fun typeText(a: JsonObject): ToolResult {
@@ -371,6 +383,19 @@ object ToolRegistry {
 
         val svc = AgentAccessibilityService.instance
         val before = svc?.currentPackage()
+
+        // ① Shizuku 特权通道（已授权且未被关掉时优先）：shell uid 不受后台启动 Activity 限制，
+        //    MIUI / HyperOS / EMUI 等 ROM 的私有限制也拦不住（悬浮窗豁免在这些 ROM 上常常无效）。
+        if (Prefs.config.value.preferShizuku && ShizukuEnhance.available()) {
+            val (ok, out) = ShizukuEnhance.startIntent(li)
+            Logs.add("Shizuku 启动 $pkg → ${out.take(80)}")
+            if (ok && awaitForeground(pkg, 2500L)) {
+                return ToolResult.text("已启动 $pkg（Shizuku 特权通道，当前前台: ${svc?.currentPackage()}）")
+            }
+            Logs.add("Shizuku 通道未生效，回退常规方式")
+        }
+
+        // ② 常规方式（需要悬浮窗豁免；部分 ROM 可能仍拦截）
         try {
             ctx.startActivity(li)
         } catch (t: Throwable) {
@@ -385,9 +410,10 @@ object ToolRegistry {
             ToolResult.error(
                 "调用了 $pkg 的启动 Intent，但 2.5 秒后前台仍是 " + (now ?: "未知") +
                     "（启动前是 " + (before ?: "未知") + "）。\n" +
-                    "原因: Android 10+ 默认禁止后台应用启动 Activity。\n" +
-                    "解决: 到 APK MCP 控制台开启「悬浮窗 / 显示在其他应用上层」权限（有该权限的 App 会被豁免），然后重试；\n" +
-                    "也可以先 press_key home 回到桌面，再调 launch_app。"
+                    "原因: Android 10+ 默认禁止后台应用启动 Activity，部分 ROM（MIUI/EMUI 等）还有更严的私有限制，悬浮窗豁免也可能无效。\n" +
+                    "解决: ① 在 APK MCP 控制台「增强」卡片里安装并授权 Shizuku，用特权通道启动（最稳）；" +
+                    "② 开启「悬浮窗」权限后重试；" +
+                    "③ 先 press_key home 回到桌面，再调 launch_app。"
             )
         }
     }
@@ -434,6 +460,18 @@ object ToolRegistry {
         val ctx = ApkMcpApp.appContext
         val svc = AgentAccessibilityService.instance
         val before = svc?.currentPackage()
+
+        // ① Shizuku 特权通道：am start 不受后台启动限制
+        if (Prefs.config.value.preferShizuku && ShizukuEnhance.available()) {
+            val (ok, out) = ShizukuEnhance.openUrl(url)
+            Logs.add("Shizuku 打开 $url → ${out.take(80)}")
+            if (ok && awaitForegroundChanged(before, 2500L)) {
+                return ToolResult.text("已打开 $url（Shizuku 特权通道，当前前台: ${svc?.currentPackage()}）")
+            }
+            Logs.add("Shizuku 通道未生效，回退常规方式")
+        }
+
+        // ② 常规方式
         val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
@@ -448,7 +486,7 @@ object ToolRegistry {
         } else {
             ToolResult.error(
                 "调用了打开 $url 的 Intent，但 2.5 秒后前台仍是 " + (now ?: "未知") +
-                    "。多半也是后台启动 Activity 被系统拦截，去开启「悬浮窗」权限后重试。"
+                    "。多半也是后台启动 Activity 被拦截：安装并授权 Shizuku（特权通道，最稳），或开启「悬浮窗」权限后重试。"
             )
         }
     }
@@ -482,11 +520,20 @@ object ToolRegistry {
         val svc = AgentAccessibilityService.instance
         val (rw, rh) = svc?.realSize() ?: (0 to 0)
         val mgr = ScreenCaptureService.instance
-        val iw = mgr?.imageWidth ?: 0
-        val ih = mgr?.imageHeight ?: 0
+        // 与 scaleFactor 一致：报告最近一次实际返回的截图尺寸，即 AI 应使用的坐标空间
+        val iw = when {
+            mgr != null && mgr.lastJpegWidth > 0 -> mgr.lastJpegWidth
+            mgr != null -> mgr.imageWidth
+            else -> 0
+        }
+        val ih = when {
+            mgr != null && mgr.lastJpegHeight > 0 -> mgr.lastJpegHeight
+            mgr != null -> mgr.imageHeight
+            else -> 0
+        }
         val ratio = if (iw > 0 && rw > 0) rw.toFloat() / iw else 1f
         return ToolResult.text(
-            "真实屏幕 ${rw}x$rh\n截图尺寸 ${iw}x$ih\n坐标缩放比 x$ratio（截图坐标 × $ratio = 真实坐标）"
+            "真实屏幕 ${rw}x$rh\n截图尺寸（当前坐标空间）${iw}x$ih\n坐标缩放比 x$ratio（截图坐标 × $ratio = 真实坐标）"
         )
     }
 
@@ -506,6 +553,7 @@ object ToolRegistry {
             if (canOverlay) "已开启（launch_app 不会被后台启动限制拦截）"
             else "未开启（launch_app / open_url 可能被系统拦截）"
         ).append('\n')
+        sb.append("Shizuku 增强: ").append(ShizukuEnhance.statusText()).append('\n')
         sb.append("屏幕捕获: ")
             .append(if (capture?.running == true) "运行中 ${capture.imageWidth}x${capture.imageHeight}" else "未开启")
             .append('\n')
@@ -522,9 +570,12 @@ object ToolRegistry {
         val space = a["space"]?.jsonPrimitive?.contentOrNull ?: "screenshot"
         if (space == "real") return 1f
         val mgr = ScreenCaptureService.instance ?: return 1f
-        if (mgr.imageWidth <= 0 || mgr.realWidth <= 0) return 1f
-        if (mgr.imageWidth == mgr.realWidth) return 1f
-        return mgr.realWidth.toFloat() / mgr.imageWidth
+        if (mgr.realWidth <= 0) return 1f
+        // 基准坐标空间 = 最近一次返回的截图实际尺寸（含 max_width 缩小的情况），
+        // 只有从未截过图才退化到虚拟显示尺寸，保证 tap/swipe 坐标与 AI 看到的图永远一致。
+        val w = if (mgr.lastJpegWidth > 0) mgr.lastJpegWidth else mgr.imageWidth
+        if (w <= 0 || w == mgr.realWidth) return 1f
+        return mgr.realWidth.toFloat() / w
     }
 
     private fun resolveXY(a: JsonObject, kx: String, ky: String): Pair<Float, Float>? {

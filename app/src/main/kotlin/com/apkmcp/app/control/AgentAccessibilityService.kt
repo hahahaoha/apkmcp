@@ -2,16 +2,22 @@ package com.apkmcp.app.control
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.accessibilityservice.GestureResultCallback
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Bundle
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.apkmcp.app.core.Logs
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * 唯一的「手」：点击 / 长按 / 滑动 / 输入 / 返回。
  * 全部走无障碍 API，不需要 root，不需要 adb。
+ *
+ * 手势返回值语义：true = 系统确认手势已执行完成；false = 被取消 / 被拒 / 超时未确认。
  */
 class AgentAccessibilityService : AccessibilityService() {
 
@@ -77,11 +83,56 @@ class AgentAccessibilityService : AccessibilityService() {
         return dispatch(path, 0L, durationMs.coerceIn(50L, 5000L))
     }
 
+    /**
+     * 派发一条手势，并等它真正执行完才返回。
+     *
+     * dispatchGesture 的返回值只代表「已受理」，不代表「已落地」；真正的成败由
+     * GestureResultCallback 异步给出（被用户触摸打断、被安全策略拦截都会走 onCancelled）。
+     * 这里用闭锁等到回调再返回（超时 = 手势时长 + 2 秒），调用方拿到的就是真实结果。
+     *
+     * 注：dispatchGesture 默认会取消仍在进行中的前一条手势 —— 由于 ToolRegistry
+     * 已把所有工具调用串行化（见其 lock），本服务自己的手势不会互相打断。
+     *
+     * 防御：若在主线程调用则不能等（回调也走主线程，等了就是死锁），
+     * 退化为只返回「已受理」。当前所有调用方都在 HTTP 工作线程，不走这条分支。
+     */
     private fun dispatch(path: Path, start: Long, duration: Long): Boolean {
+        var completed = false
+        val done = CountDownLatch(1)
+        val onMain = Looper.getMainLooper() === Looper.myLooper()
         return try {
             val stroke = GestureDescription.StrokeDescription(path, start, duration)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
-            dispatchGesture(gesture, null, null)
+
+            val accepted = dispatchGesture(
+                gesture,
+                object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        completed = true
+                        done.countDown()
+                    }
+
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        Logs.add("手势被取消（可能被用户触摸或安全策略打断）")
+                        done.countDown()
+                    }
+                },
+                null
+            )
+
+            if (!accepted) {
+                Logs.add("手势派发被系统拒绝")
+                return false
+            }
+            if (onMain) {
+                Logs.add("警告：主线程调用手势，无法等待真实结果，仅报已受理")
+                return true
+            }
+            if (!done.await(duration + 2000L, TimeUnit.MILLISECONDS)) {
+                Logs.add("手势结果超时未确认（时长 ${duration}ms）")
+                return false
+            }
+            completed
         } catch (t: Throwable) {
             Logs.add("手势失败: ${t.message}")
             false
