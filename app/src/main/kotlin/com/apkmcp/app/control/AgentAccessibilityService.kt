@@ -2,7 +2,6 @@ package com.apkmcp.app.control
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.accessibilityservice.GestureResultCallback
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Bundle
@@ -106,7 +105,7 @@ class AgentAccessibilityService : AccessibilityService() {
 
             val accepted = dispatchGesture(
                 gesture,
-                object : GestureResultCallback() {
+                object : GestureDescription.GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
                         completed = true
                         done.countDown()

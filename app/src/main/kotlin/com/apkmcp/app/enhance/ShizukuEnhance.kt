@@ -1,7 +1,10 @@
 package com.apkmcp.app.enhance
 
+import android.content.ComponentName
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.os.IBinder
 import com.apkmcp.app.ApkMcpApp
 import com.apkmcp.app.core.Logs
 import rikka.shizuku.Shizuku
@@ -13,7 +16,10 @@ import rikka.shizuku.Shizuku
  * 这里只用它做一件事：用 `am start` 启动 Activity —— shell uid 不受「后台启动 Activity」
  * 限制（Android 10+ 的 BAL 限制只约束普通应用），MIUI / HyperOS / EMUI 的私有限制也拦不住。
  *
- * 特权面刻意收敛：不提供通用 shell 通道，AI 无法借这里执行任意命令。
+ * 实现说明：Shizuku 13.x 已把 newProcess 转为私有 API，这里按官方推荐走 UserService ——
+ * 把一个极小的 IShell 服务（IShell.aidl / ShellService.kt）加载进 Shizuku 的特权进程，
+ * 只暴露 exec 一个命令入口，argv 直传、不经 shell 拼接，没有注入面。
+ *
  * 所有方法都静默降级 —— Shizuku 未安装 / 未运行 / 未授权时一律返回不可用，
  * 调用方（ToolRegistry）自动回退常规方式。
  */
@@ -26,6 +32,27 @@ object ShizukuEnhance {
 
     /** 增强模式状态，供 UI / get_status 展示 */
     enum class State { NOT_INSTALLED, NOT_RUNNING, NEED_PERMISSION, READY }
+
+    /** 已连接的特权 shell 服务（跑在 Shizuku 进程里） */
+    @Volatile private var shell: IShell? = null
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            shell = IShell.Stub.asInterface(binder)
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            shell = null
+        }
+    }
+
+    private fun serviceArgs(): Shizuku.UserServiceArgs =
+        Shizuku.UserServiceArgs(
+            ComponentName(ApkMcpApp.appContext.packageName, ShellService::class.java.name)
+        )
+            .daemon(false)
+            .version(1)
+            .processNameSuffix("apkmcp-shell")
 
     /** Shizuku App 是否已安装 */
     fun installed(): Boolean = try {
@@ -77,17 +104,40 @@ object ShizukuEnhance {
         }
     }
 
+    /** 拿到特权 shell 服务。首次绑定是异步的，最多等 5 秒回调。 */
+    private fun obtainShell(): IShell? {
+        shell?.let { return it }
+        return try {
+            Shizuku.bindUserService(serviceArgs(), connection)
+            val deadline = System.currentTimeMillis() + 5000
+            while (System.currentTimeMillis() < deadline) {
+                shell?.let { return it }
+                try {
+                    Thread.sleep(60)
+                } catch (_: InterruptedException) {
+                    return shell
+                }
+            }
+            shell
+        } catch (t: Throwable) {
+            Logs.add("绑定 Shizuku UserService 失败: ${t.message}")
+            null
+        }
+    }
+
     /**
-     * 以 shell/root 权限执行一条命令。argv 数组直传、不经 shell 拼接，没有注入面。
+     * 以 shell/root 权限执行一条命令。
      * 返回 (退出码是否为 0, 合并输出)。
      */
     private fun exec(cmd: Array<String>): Pair<Boolean, String> {
         return try {
-            val p = Shizuku.newProcess(cmd, null, null)
-            val out = p.inputStream.bufferedReader().use { it.readText() }
-            val err = p.errorStream.bufferedReader().use { it.readText() }
-            val code = p.waitFor()
-            Pair(code == 0, (out + err).trim())
+            if (!available()) return Pair(false, "Shizuku 不可用")
+            val s = obtainShell() ?: return Pair(false, "Shizuku UserService 未连接")
+            val res = s.exec(cmd)
+            val idx = res.indexOf('\n')
+            val code = if (idx >= 0) res.substring(0, idx).trim().toIntOrNull() ?: -1 else -1
+            val out = if (idx >= 0) res.substring(idx + 1) else ""
+            Pair(code == 0, out.trim())
         } catch (t: Throwable) {
             Logs.add("Shizuku 执行失败: ${t.message}")
             Pair(false, t.message ?: "unknown")
@@ -97,14 +147,17 @@ object ShizukuEnhance {
     /**
      * 用 am start 启动一个已解析出组件的 Intent（如 getLaunchIntentForPackage 的结果）。
      * shell uid 发起的启动不受「后台启动 Activity」限制，MIUI/EMUI 的私有限制同样无效。
+     * timeout 8 兜底：万一 am 卡死，工具调用不会永远挂起。
      */
     fun startIntent(intent: Intent): Pair<Boolean, String> {
         val comp = intent.component
             ?: return Pair(false, "Intent 没有 component，无法用 am start")
-        return exec(arrayOf("am", "start", "-n", "${comp.packageName}/${comp.className}"))
+        return exec(
+            arrayOf("timeout", "8", "am", "start", "-n", "${comp.packageName}/${comp.className}")
+        )
     }
 
     /** 用 am start 打开网址 */
     fun openUrl(url: String): Pair<Boolean, String> =
-        exec(arrayOf("am", "start", "-a", "android.intent.action.VIEW", "-d", url))
+        exec(arrayOf("timeout", "8", "am", "start", "-a", "android.intent.action.VIEW", "-d", url))
 }
