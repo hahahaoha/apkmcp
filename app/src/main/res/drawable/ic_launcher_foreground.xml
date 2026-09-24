@@ -1,16 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- 外环 -->
     <path
-        android:fillColor="#FFD0BCFF"
-        android:pathData="M54,28 L78,42 L78,70 L54,84 L30,70 L30,42 Z"
-        android:strokeWidth="0" />
+        android:pathData="M32.5,54 a21.5,21.5 0 1 0 43,0 a21.5,21.5 0 1 0 -43,0 z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5.5"
+        android:fillColor="#00000000" />
+    <!-- 中心点 -->
     <path
-        android:fillColor="#FF1B1B2F"
-        android:pathData="M46,45 L62,45 L62,63 L46,63 Z" />
+        android:pathData="M48,54 a6,6 0 1 0 12,0 a6,6 0 1 0 -12,0 z"
+        android:fillColor="#FFFFFFFF" />
+    <!-- 四向刻度 · 上 -->
     <path
-        android:fillColor="#FF6750A4"
-        android:pathData="M50,49 L58,49 L58,59 L50,59 Z" />
+        android:pathData="M54,28.5 L54,23.5"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <!-- 四向刻度 · 下 -->
+    <path
+        android:pathData="M54,79.5 L54,84.5"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <!-- 四向刻度 · 左 -->
+    <path
+        android:pathData="M28.5,54 L23.5,54"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <!-- 四向刻度 · 右 -->
+    <path
+        android:pathData="M79.5,54 L84.5,54"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
 </vector>
